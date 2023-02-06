@@ -36,6 +36,8 @@ Simply add all folders to matlab path and run `AutomatedAnnotater.mlapp`
 
 * View the keypoint at different angles to see if depth was accurate. You can click on a keypoint in the list and adjust its depth manually.
 
+* If you don't hit `Finish`, your annotations won't be saved.
+
 ## Recording Tab
 
 * Hit `Begin`.
