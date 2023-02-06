@@ -1,0 +1,168 @@
+classdef BaseUIController < handle
+    %% Properties
+    properties
+        statusHandler;
+        calibrationTargetHandler;
+        
+        rosbagParser;
+        intrinsics;
+
+        currentFrame;
+        updatedFrame;
+        frameSkips;
+        numFrames;
+
+        isReady;
+        isRunning;
+
+        rgbImage;
+        depthImage;
+        undistortedImage;
+        undistortedDepthImage;
+        undistortedToDistortedMapping;
+
+        fig;
+        axes;
+    end
+
+    %% Constructor
+    methods
+
+        function obj = BaseUIController(baseParams)
+            obj.isReady = false;
+            if ~baseParams.rosbagParser.isReady
+                statusHandler.disp(StatusMessage("Invalid Rosbag Parser. Did you run the setup tab?", 2));
+                return
+            end
+
+            obj.statusHandler = baseParams.statusHandler;
+            obj.calibrationTargetHandler = baseParams.calibrationTargetHandler;
+            
+            obj.rosbagParser = baseParams.rosbagParser;
+            obj.intrinsics = obj.rosbagParser.parseIntrinsics;
+            obj.numFrames = obj.rosbagParser.numImages;
+
+            obj.currentFrame = baseParams.currentFrame;
+            obj.updatedFrame = nan;
+            obj.frameSkips = baseParams.frameSkips;
+
+            obj.generatePointsMapping();
+
+            obj.isRunning = false;
+            obj.isReady = true; 
+           
+        end
+
+    end
+
+    %% Helper Functions
+    methods
+        function generatePointsMapping(obj)
+            filename = "camera_mapping.mat";
+
+            try
+                obj.undistortedToDistortedMapping = load(filename);
+            catch
+                obj.statusHandler.disp(StatusMessage("Distortion mapping not found! Making one now, this will take a bit...", 1));
+                rows = obj.rosbagParser.imageSize(1);
+                cols = obj.rosbagParser.imageSize(2);
+                numPixels = rows * cols;
+    
+                points = zeros(numPixels, 2);
+                for r=1:rows
+                    for c=1:cols
+                        points((r - 1) * cols + (c - 1) + 1, :) = [r, c];       
+                    end
+                end             
+    
+                undistortedPoints = zeros(numPixels, 2);
+                for r=1:rows
+                    status = sprintf("Finished row %d...", r);
+                    obj.statusHandler.disp(StatusMessage( 1));
+                    undistortedPoints((r - 1) * cols + 1 : (r) * cols, :) = undistortPoints(points((r - 1) * cols + 1 : (r) * cols,:), obj.intrinsics);         
+                end
+                obj.undistortedToDistortedMapping = permute(reshape(undistortedPoints, cols, rows, 2), [2,1,3]);
+
+                undistortedToDistortedMapping = obj.undistortedToDistortedMapping;
+                save(filename, 'undistortedToDistortedMapping');
+            end
+
+        end
+    end
+    %% Overrides
+    methods (Access = protected)
+        
+        function updateAndDisplayCurrentImage(obj)
+            if obj.updatedFrame ~= obj.currentFrame
+                obj.updateCurrentImage();
+                obj.updatePoseEstimate(); 
+            end
+            obj.displayCurrentImage();
+            obj.updatedFrame = obj.currentFrame;
+        end
+
+        function updateCurrentImage(obj)
+            [obj.rgbImage, obj.depthImage] = obj.rosbagParser.parseRGBDImage(obj.currentFrame);
+            % TODO: if undistortion shifts the origin, we need to translate all points
+            % See https://www.mathworks.com/help/vision/ref/extrinsics.html
+            obj.undistortedImage = undistortImage(obj.rgbImage, obj.intrinsics);
+            obj.undistortedDepthImage = undistortImage(obj.depthImage, obj.intrinsics);
+        end
+
+        function updatePoseEstimate(obj)
+            obj.calibrationTargetHandler.updateExtrinsics(obj.undistortedImage);
+        end
+
+        function displayCurrentImage(obj)
+            imshow(obj.undistortedImage, 'Parent', obj.axes);
+        end
+    end
+
+    %% Input Handler Functions
+    methods (Access = public)
+
+        function handleBegin(obj)
+            obj.fig = figure;
+            obj.axes = gca;
+            obj.isRunning = true;
+            obj.updateAndDisplayCurrentImage();
+        end
+
+        function handleSubtractFrames(obj)
+            obj.currentFrame = obj.currentFrame - obj.frameSkips;
+        end
+
+        function handleAddFrames(obj)
+            obj.currentFrame = obj.currentFrame + obj.frameSkips;
+        end      
+
+        function handleFinish(obj)
+            obj.isRunning = false;
+            close(obj.fig);
+        end
+    end
+
+    %% Getters / Setters
+    methods
+
+        function currentFrame = get.currentFrame(obj)
+            currentFrame = obj.currentFrame;
+        end
+
+        function set.currentFrame(obj, value)
+            obj.currentFrame = clamp(value, 1, obj.numFrames);
+            if obj.isRunning
+                obj.updateAndDisplayCurrentImage();
+            end
+        end
+
+        function frameSkips = get.frameSkips(obj)
+            frameSkips = obj.frameSkips;
+        end
+
+        function set.frameSkips(obj, value)
+            obj.frameSkips = value;
+        end
+
+    end
+end
