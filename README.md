@@ -1,4 +1,4 @@
-# AutomatedAnnotater
+# AutomatedAnnotator
 A toolkit to rapidly annotate keypoints. Requires the user to have a calibration target in the frame of the target. 
 RGB images and depth images should be recorded in a rosbag.
 
